@@ -36,9 +36,16 @@ NUM_FLIGHT_BOOKINGS = 1000
 
 def generate_users():
     users = []
+    # get existing emails
+    cursor.execute("SELECT email FROM User")
+    existing_emails = set(row[0] for row in cursor.fetchall())
+
     for _ in range(NUM_USERS):
         name = fake.name()
         email = fake.unique.email()
+        while email in existing_emails:
+            email = fake.unique.email()
+        existing_emails.add(email)
         password = fake.password()
         points = random.randint(0, 100)
         users.append((name, email, password, points))
@@ -49,11 +56,15 @@ def generate_users():
 
 
 def generate_card_details():
-    card_numbers = []
     cards = []
+    cursor.execute("SELECT cardNumber FROM CardDetails")
+    existing_card_numbers = set(row[0] for row in cursor.fetchall())
+
     for _ in range(NUM_CARD_DETAILS):
         card_number = random.randint(1000000000000000, 9999999999999999)
-        card_numbers.append(card_number)  # Collect card numbers for reuse
+        while card_number in existing_card_numbers:
+            card_number = random.randint(1000000000000000, 9999999999999999)
+        existing_card_numbers.add(card_number)
         cvv = random.randint(100, 999)
         expiry = fake.date_between(start_date="today", end_date="+2y")
         payment_method = random.choice(["Visa", "MasterCard", "Amex"])
@@ -62,13 +73,15 @@ def generate_card_details():
         "INSERT INTO CardDetails (cardNumber, cardCVV, cardExpiryDate, paymentMethod) VALUES (%s, %s, %s, %s)", cards)
     db.commit()
     print("Card details loaded.")
-    return card_numbers
 
 
 def generate_bookings():
     bookings = []
+    cursor.execute("SELECT userID FROM User")
+    user_ids = [row[0] for row in cursor.fetchall()]
+
     for _ in range(NUM_BOOKINGS):
-        user_id = random.randint(1, NUM_USERS)
+        user_id = random.choice(user_ids)
         cost = round(random.uniform(100, 1000), 2)
         status = random.choice(["confirmed", "cancelled", "completed"])
         date = fake.date_this_year()
@@ -79,11 +92,24 @@ def generate_bookings():
     print("Bookings loaded.")
 
 
-def generate_payments(card_numbers):
+def generate_payments():
     payments = []
-    for booking_id in range(1, NUM_BOOKINGS + 1):
+    cursor.execute("SELECT bookingID FROM Booking")
+    booking_ids = [row[0] for row in cursor.fetchall()]
+    cursor.execute("SELECT cardNumber FROM CardDetails")
+    card_numbers = [row[0] for row in cursor.fetchall()]
+
+    cursor.execute("SELECT bookingID FROM Payment")
+    used_booking_ids = set(row[0] for row in cursor.fetchall())
+
+    for _ in range(1, NUM_BOOKINGS + 1):
+        booking_id = random.choice(booking_ids)
+        while booking_id in used_booking_ids:
+            booking_id = random.choice(booking_ids)
+        used_booking_ids.add(booking_id)
+
         amount = round(random.uniform(50, 500), 2)
-        card_number = random.choice(card_numbers)  # Use existing card numbers
+        card_number = random.choice(card_numbers)
         date = fake.date_this_year()
         payments.append((booking_id, amount, card_number, date))
     cursor.executemany(
@@ -109,23 +135,28 @@ def generate_airlines():
 
 
 def generate_airports():
-    airport_codes = []
     airports = []
     countries = [
         "United States", "Canada", "Brazil", "Australia", "United Kingdom", "Germany",
         "France", "Italy", "India", "Japan", "South Korea", "China", "Mexico", "South Africa"
     ]
-    unique_airport_names = set()
+    cursor.execute("SELECT airportName FROM Airport")
+    existing_airport_names = set(row[0] for row in cursor.fetchall())
+
+    cursor.execute("SELECT airportCode FROM Airport")
+    existing_airport_codes = set(row[0] for row in cursor.fetchall())
 
     for _ in range(NUM_AIRPORTS):
         code = fake.unique.lexify(text='???').upper()
-        airport_codes.append(code)
+        while code in existing_airport_codes:
+            code = fake.unique.lexify(text='???').upper()
+        existing_airport_codes.add(code)
 
         # ensure name isn't repeated
         name = fake.city()
-        while name in unique_airport_names:
+        while name in existing_airport_names:
             name = fake.city()
-        unique_airport_names.add(name)
+        existing_airport_names.add(name)
 
         city = name
         country = random.choice(countries)
@@ -135,14 +166,23 @@ def generate_airports():
         "INSERT INTO Airport (airportCode, airportName, city, country, timeZone) VALUES (%s, %s, %s, %s, %s)", airports)
     db.commit()
     print("Airports loaded.")
-    return airport_codes
 
 
-def generate_hotels(airport_codes):
+def generate_hotels():
     hotels = []
+    cursor.execute("SELECT airportCode FROM Airport")
+    airport_codes = [row[0] for row in cursor.fetchall()]
+
+    cursor.execute("SELECT hotelName FROM Hotel")
+    used_hotel_names = set(row[0] for row in cursor.fetchall())
+
     for _ in range(NUM_HOTELS):
         airport_code = random.choice(airport_codes)
         name = fake.company()
+        while name in used_hotel_names:
+            name = fake.company()
+        used_hotel_names.add(name)
+
         city = fake.city()
         hotels.append((airport_code, name, city))
     cursor.executemany(
@@ -153,7 +193,18 @@ def generate_hotels(airport_codes):
 
 def generate_hotel_rooms():
     rooms = []
-    for hotel_id in range(1, NUM_HOTELS + 1):
+    cursor.execute("SELECT hotelID FROM Hotel")
+    hotel_ids = [row[0] for row in cursor.fetchall()]
+
+    cursor.execute("SELECT hotelID FROM HotelRoom")
+    used_hotel_ids = set(row[0] for row in cursor.fetchall())
+
+    for _ in range(1, NUM_HOTELS + 1):
+        hotel_id = random.choice(hotel_ids)
+        while hotel_id in used_hotel_ids:
+            hotel_id = random.choice(hotel_ids)
+        used_hotel_ids.add(hotel_id)
+
         for room_type in ["Single", "Double", "Suite"]:
             price = round(random.uniform(50, 300), 2)
             status = random.choice([True, False])
@@ -166,16 +217,23 @@ def generate_hotel_rooms():
 
 def generate_hotel_bookings():
     hotel_bookings = []
-    used_combinations = set()
+    cursor.execute("SELECT hotelID FROM Hotel")
+    hotel_ids = [row[0] for row in cursor.fetchall()]
+    cursor.execute("SELECT bookingID FROM Booking")
+    booking_ids = [row[0] for row in cursor.fetchall()]
+    cursor.execute("SELECT hotelID, bookingID FROM HotelBooking")
+    existing_pairs = set(cursor.fetchall())
 
     for _ in range(NUM_HOTEL_BOOKINGS):
         # generate a unique (hotel_id, booking_id) pair
-        while True:
-            hotel_id = random.randint(1, NUM_HOTELS)
-            booking_id = random.randint(1, NUM_BOOKINGS)
-            if (hotel_id, booking_id) not in used_combinations:
-                used_combinations.add((hotel_id, booking_id))
-                break
+
+        hotel_id = random.choice(hotel_ids)
+        booking_id = random.choice(booking_ids)
+        while (hotel_id, booking_id) in existing_pairs:
+            hotel_id = random.choice(hotel_ids)
+            booking_id = random.choice(booking_ids)
+
+        existing_pairs.add((hotel_id, booking_id))
 
         check_in = fake.date_this_year()
         check_out = fake.date_between_dates(date_start=check_in)
@@ -188,17 +246,22 @@ def generate_hotel_bookings():
     print("Hotel bookings loaded.")
 
 
-def generate_flights(airport_codes):
+def generate_flights():
     flights = []
+    cursor.execute("SELECT airportCode FROM Airport")
+    airport_codes = [row[0] for row in cursor.fetchall()]
+    cursor.execute("SELECT airlineID FROM Airline")
+    airline_ids = [row[0] for row in cursor.fetchall()]
+
     for _ in range(NUM_FLIGHTS):
-        dep_airport = ''
-        arr_airport = ''
+        dep_airport = random.choice(airport_codes)
+        arr_airport = random.choice(airport_codes)
         # ensure dep and arr airport are not the same
         while (dep_airport == arr_airport):
             dep_airport = random.choice(airport_codes)
             arr_airport = random.choice(airport_codes)
 
-        airline_id = random.randint(1, NUM_AIRLINES)
+        airline_id = random.choice(airline_ids)
         dep_time = fake.date_time_this_year()
         arr_time = fake.date_time_between_dates(datetime_start=dep_time)
         price = round(random.uniform(50, 500), 2)
@@ -212,15 +275,21 @@ def generate_flights(airport_codes):
 
 def generate_flight_bookings():
     flight_bookings = []
-    used_combinations = set()
+    cursor.execute("SELECT flightID FROM Flight")
+    flight_ids = [row[0] for row in cursor.fetchall()]
+    cursor.execute("SELECT bookingID FROM Booking")
+    booking_ids = [row[0] for row in cursor.fetchall()]
+    cursor.execute("SELECT flightID, bookingID FROM FlightBooking")
+    existing_pairs = set(cursor.fetchall())
 
     for _ in range(NUM_FLIGHT_BOOKINGS):
-        while True:
-            flight_id = random.randint(1, NUM_FLIGHTS)
-            booking_id = random.randint(1, NUM_BOOKINGS)
-            if (flight_id, booking_id) not in used_combinations:
-                used_combinations.add((flight_id, booking_id))
-                break
+        flight_id = random.choice(flight_ids)
+        booking_id = random.choice(booking_ids)
+        while (flight_id, booking_id) in existing_pairs:
+            flight_id = random.choice(flight_ids)
+            booking_id = random.choice(booking_ids)
+
+        existing_pairs.add((flight_id, booking_id))
 
         seat = fake.bothify(text='??###')
         baggage_limit = random.randint(15, 30)
@@ -236,10 +305,17 @@ def generate_flight_bookings():
 
 def generate_reviews():
     reviews = []
+    cursor.execute("SELECT userID FROM User")
+    user_ids = [row[0] for row in cursor.fetchall()]
+    cursor.execute("SELECT airlineID FROM Airline")
+    airline_ids = [row[0] for row in cursor.fetchall()]
+    cursor.execute("SELECT hotelID FROM Hotel")
+    hotel_ids = [row[0] for row in cursor.fetchall()]
+
     for _ in range(NUM_REVIEWS):
-        user_id = random.randint(1, NUM_USERS)
-        airline_id = random.randint(1, NUM_AIRLINES)
-        hotel_id = random.randint(1, NUM_HOTELS)
+        user_id = random.choice(user_ids)
+        airline_id = random.choice(airline_ids)
+        hotel_id = random.choice(hotel_ids)
         rating = random.randint(1, 5)
         comment = fake.sentence()
         date = fake.date_this_year()
@@ -252,17 +328,17 @@ def generate_reviews():
 
 # Generate data in proper sequence
 # generate_users()
-# card_numbers = generate_card_details()
+# generate_card_details()
 # generate_bookings()
-# generate_payments(card_numbers)
-# airport_codes = generate_airports()
-# generate_airlines()
-# generate_hotels(airport_codes)
-# generate_hotel_rooms()
-# generate_hotel_bookings()
-# generate_flights(airport_codes)
-# generate_flight_bookings()
-# generate_reviews()
+# generate_payments()
+generate_airports()
+generate_airlines()
+generate_hotels()
+generate_hotel_rooms()
+generate_hotel_bookings()
+generate_flights()
+generate_flight_bookings()
+generate_reviews()
 
 # Close connection
 cursor.close()
